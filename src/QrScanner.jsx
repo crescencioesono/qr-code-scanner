@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import QrReader from 'react-qr-reader';
+import { QrReader } from 'react-qr-reader'; // Changed to named import
 import { Button, Typography, Box, Alert, Paper } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';

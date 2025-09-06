@@ -6,7 +6,7 @@ import { AuthContext } from './AuthContext';
 
 const App = () => {
   const [view, setView] = useState('login');
-  const { user, logout } = useContext(AuthContext);
+  const { logout } = useContext(AuthContext); // Removed unused 'user'
 
   const handleLogin = () => setView('scanner');
   const handleLogout = () => {
