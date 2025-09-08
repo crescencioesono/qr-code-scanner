@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useContext } from 'react';
-import { QrReader } from 'react-qr-reader'; // Changed to named import
+import { QrReader } from 'react-qr-reader';
 import { Button, Typography, Box, Alert, Paper } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';
@@ -29,10 +29,19 @@ const QrScanner = ({ onLogout }) => {
 
   // Verificar permisos de cámara
   useEffect(() => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setCameraPermission(false);
+      setError('La API de cámara no está soportada en este navegador o entorno. Usa HTTPS y un navegador moderno.');
+      return;
+    }
+
     navigator.mediaDevices
       .getUserMedia({ video: { facingMode: 'environment' } })
       .then(() => setCameraPermission(true))
-      .catch(() => setCameraPermission(false));
+      .catch((err) => {
+        setCameraPermission(false);
+        setError(`No se puede acceder a la cámara trasera: ${err.message}. Asegúrate de usar HTTPS y otorgar permisos.`);
+      });
   }, []);
 
   const handleScan = (data) => {
@@ -53,7 +62,7 @@ const QrScanner = ({ onLogout }) => {
 
   const startScanning = () => {
     if (!cameraPermission) {
-      setError('No se tienen permisos para acceder a la cámara. Por favor, habilítalos.');
+      setError('No se tienen permisos para acceder a la cámara. Por favor, habilítalos y usa HTTPS.');
       return;
     }
     setError('');
@@ -75,7 +84,7 @@ const QrScanner = ({ onLogout }) => {
       </Button>
       {cameraPermission === false && (
         <Alert severity="error">
-          No se tienen permisos para acceder a la cámara. Habilítalos en la configuración.
+          No se tienen permisos para acceder a la cámara. Habilítalos en la configuración y usa HTTPS.
         </Alert>
       )}
       {error && <Alert severity="error">{error}</Alert>}
@@ -92,7 +101,7 @@ const QrScanner = ({ onLogout }) => {
             onError={handleError}
             onScan={handleScan}
             style={{ width: '100%', maxWidth: '400px' }}
-            facingMode="environment"
+            constraints={{ facingMode: 'environment' }}
           />
         ) : (
           <Button variant="contained" onClick={startScanning}>
