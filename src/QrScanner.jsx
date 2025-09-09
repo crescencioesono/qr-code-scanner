@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useContext } from 'react';
-import { QrReader } from 'react-qr-reader';
+import React, { useState, useEffect, useContext, useRef } from 'react';
+import jsQR from 'jsqr';
 import { Button, Typography, Box, Alert, Paper } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';
@@ -12,6 +12,9 @@ const QrScanner = ({ onLogout }) => {
   const [history, setHistory] = useState([]);
   const [backCamera, setBackCamera] = useState(null);
   const { user } = useContext(AuthContext);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
+  const animationFrameRef = useRef(null);
 
   // Cargar historial desde localStorage
   useEffect(() => {
@@ -64,23 +67,69 @@ const QrScanner = ({ onLogout }) => {
     });
   }, []);
 
-  const handleScan = (data) => {
-    console.log('handleScan ejecutado con datos:', data);
-    if (data) {
-      setScanResult(data);
-      setHistory((prev) => [
-        { user: user.username, code: data, timestamp: new Date().toLocaleString('es-ES') },
-        ...prev,
-      ]);
-      setIsScanning(false);
+  // Iniciar flujo de video y escaneo
+  useEffect(() => {
+    if (!isScanning || !videoRef.current || !canvasRef.current || !cameraPermission) {
+      return;
     }
-  };
 
-  const handleError = (err) => {
-    console.error('Error en QrReader:', err);
-    setError('Error al escanear: ' + err.message);
-    setIsScanning(false);
-  };
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext('2d');
+
+    navigator.mediaDevices
+      .getUserMedia({
+        video: { deviceId: backCamera ? backCamera.deviceId : undefined, width: { ideal: 1280 }, height: { ideal: 720 } }
+      })
+      .then(stream => {
+        video.srcObject = stream;
+        video.play();
+        scan();
+      })
+      .catch(err => {
+        setError(`Error al iniciar el flujo de video: ${err.message}`);
+        setIsScanning(false);
+      });
+
+    const scan = () => {
+      if (video.readyState === video.HAVE_ENOUGH_DATA) {
+        canvas.height = video.videoHeight;
+        canvas.width = video.videoWidth;
+        context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+        const code = jsQR(imageData.data, imageData.width, imageData.height, {
+          inversionAttempts: 'dontInvert',
+        });
+
+        if (code) {
+          console.log('Código QR detectado:', code.data);
+          setScanResult(code.data);
+          setHistory((prev) => [
+            { user: user.username, code: code.data, timestamp: new Date().toLocaleString('es-ES') },
+            ...prev,
+          ]);
+          setIsScanning(false);
+          if (video.srcObject) {
+            video.srcObject.getTracks().forEach(track => track.stop());
+          }
+        } else {
+          console.log('No se detectó código QR en este frame');
+          animationFrameRef.current = requestAnimationFrame(scan);
+        }
+      } else {
+        animationFrameRef.current = requestAnimationFrame(scan);
+      }
+    };
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+      if (video.srcObject) {
+        video.srcObject.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [isScanning, cameraPermission, backCamera, user.username]);
 
   const startScanning = () => {
     if (!cameraPermission) {
@@ -90,6 +139,13 @@ const QrScanner = ({ onLogout }) => {
     setError('');
     setScanResult('');
     setIsScanning(true);
+  };
+
+  const stopScanning = () => {
+    setIsScanning(false);
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    }
   };
 
   return (
@@ -118,14 +174,16 @@ const QrScanner = ({ onLogout }) => {
       )}
       <Box sx={{ mb: 2 }}>
         {isScanning ? (
-          <QrReader
-            delay={500}
-            onError={handleError}
-            onScan={handleScan}
-            style={{ width: '100%', maxWidth: '400px' }}
-            constraints={{ deviceId: backCamera ? backCamera.deviceId : { facingMode: 'environment' } }}
-            legacyMode={false}
-          />
+          <>
+            <video
+              ref={videoRef}
+              style={{ width: '100%', maxWidth: '400px', display: 'block' }}
+            />
+            <canvas ref={canvasRef} style={{ display: 'none' }} />
+            <Button variant="contained" onClick={stopScanning}>
+              Detener Escaneo
+            </Button>
+          </>
         ) : (
           <Button variant="contained" onClick={startScanning}>
             Iniciar Escaneo
