@@ -1,10 +1,10 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
-import jsQR from 'jsqr';
+import QrScanner from 'qr-scanner';
 import { Button, Typography, Box, Alert, Paper } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';
 
-const QrScanner = ({ onLogout }) => {
+const QrScannerComponent = ({ onLogout }) => {
   const [scanResult, setScanResult] = useState('');
   const [error, setError] = useState('');
   const [cameraPermission, setCameraPermission] = useState(null);
@@ -14,8 +14,7 @@ const QrScanner = ({ onLogout }) => {
   const [isVideoReady, setIsVideoReady] = useState(false);
   const { user } = useContext(AuthContext);
   const videoRef = useRef(null);
-  const canvasRef = useRef(null);
-  const animationFrameRef = useRef(null);
+  const qrScannerRef = useRef(null);
   const streamRef = useRef(null);
   const isMounted = useRef(true);
 
@@ -88,87 +87,14 @@ const QrScanner = ({ onLogout }) => {
     initializeCamera();
   }, []);
 
-  // Función de escaneo
-  const scan = () => {
-    console.log('Iniciando función scan, isScanning:', isScanning, 'isMounted:', isMounted.current, 'isVideoReady:', isVideoReady);
-    if (!isScanning || !isMounted.current || !videoRef.current || !canvasRef.current || !isVideoReady) {
-      console.log('Escaneo detenido: condiciones no cumplidas', { 
-        isScanning, 
-        isMounted: isMounted.current,
-        videoRef: !!videoRef.current, 
-        canvasRef: !!canvasRef.current,
-        isVideoReady
-      });
-      return;
-    }
-
-    const video = videoRef.current;
-    const canvas = canvasRef.current;
-    const context = canvas.getContext('2d');
-
-    console.log('Procesando frame de video, readyState:', video.readyState);
-    if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0 && video.videoHeight > 0) {
-      console.log('Video listo, dimensiones:', { width: video.videoWidth, height: video.videoHeight });
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      
-      console.log('Dibujando frame en canvas');
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      
-      try {
-        console.log('Obteniendo datos de imagen del canvas');
-        const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
-        console.log('Datos de imagen obtenidos, dimensiones:', { width: imageData.width, height: imageData.height });
-        
-        console.log('Ejecutando jsQR');
-        const code = jsQR(imageData.data, imageData.width, imageData.height, {
-          inversionAttempts: 'attemptBoth',
-          locate: true
-        });
-
-        if (code && code.data) {
-          console.log('Código QR detectado:', code.data);
-          setScanResult(code.data);
-          setHistory((prev) => [
-            { 
-              user: user.username, 
-              code: code.data, 
-              timestamp: new Date().toLocaleString('es-ES'),
-              id: Date.now()
-            },
-            ...prev,
-          ]);
-          stopScanning();
-          return;
-        } else {
-          console.log('No se detectó código QR en este frame');
-        }
-      } catch (err) {
-        console.error('Error al procesar imagen con jsQR:', err.name, err.message);
-      }
-    } else {
-      console.log('Video no listo, readyState:', video.readyState, 'dimensiones:', { 
-        width: video.videoWidth, 
-        height: video.videoHeight 
-      });
-    }
-
-    if (isScanning && isMounted.current) {
-      console.log('Solicitando próximo frame');
-      animationFrameRef.current = requestAnimationFrame(scan);
-    } else {
-      console.log('Escaneo detenido, no se solicita próximo frame', { isScanning, isMounted: isMounted.current });
-    }
-  };
-
+  // Iniciar escaneo
   const startScanning = async () => {
     if (!cameraPermission) {
       console.error('Intento de escaneo sin permisos de cámara');
       setError('No se tienen permisos para acceder a la cámara. Por favor, habilítalos y usa HTTPS.');
       return;
     }
-    
-    // Usar variable local para isScanning
+
     let localIsScanning = true;
     console.log('Iniciando escaneo, localIsScanning:', localIsScanning);
     setError('');
@@ -191,11 +117,11 @@ const QrScanner = ({ onLogout }) => {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       streamRef.current = stream;
       console.log('Flujo de video obtenido:', stream);
-      
+
       if (videoRef.current && isMounted.current) {
         console.log('Asignando stream al elemento video');
         videoRef.current.srcObject = stream;
-        
+
         console.log('Esperando metadatos del video');
         videoRef.current.onloadedmetadata = () => {
           console.log('Metadatos del video cargados:', { 
@@ -210,8 +136,35 @@ const QrScanner = ({ onLogout }) => {
             if (localIsScanning && isMounted.current) {
               console.log('Estableciendo isVideoReady: true');
               setIsVideoReady(true);
-              console.log('Iniciando bucle de escaneo');
-              animationFrameRef.current = requestAnimationFrame(scan);
+              console.log('Inicializando QrScanner');
+              qrScannerRef.current = new QrScanner(videoRef.current, (result) => {
+                console.log('Código QR detectado:', result.data);
+                setScanResult(result.data);
+                setHistory((prev) => [
+                  { 
+                    user: user.username, 
+                    code: result.data, 
+                    timestamp: new Date().toLocaleString('es-ES'),
+                    id: Date.now()
+                  },
+                  ...prev,
+                ]);
+                stopScanning();
+              }, {
+                maxScansPerSecond: 30,
+                highlightScanRegion: true,
+                highlightCodeOutline: true
+              });
+              console.log('Iniciando bucle de escaneo con qr-scanner');
+              qrScannerRef.current.start().then(() => {
+                console.log('Escaneo iniciado correctamente');
+              }).catch(err => {
+                console.error('Error al iniciar qr-scanner:', err.name, err.message);
+                setError('Error al iniciar el escáner: ' + err.message);
+                localIsScanning = false;
+                setIsScanning(false);
+                setIsVideoReady(false);
+              });
             } else {
               console.log('No se inicia bucle de escaneo', { localIsScanning, stateIsScanning: isScanning, isMounted: isMounted.current });
             }
@@ -232,7 +185,6 @@ const QrScanner = ({ onLogout }) => {
           setIsScanning(false);
           setIsVideoReady(false);
         };
-        // Verificar estado inicial del video
         console.log('Estado inicial del video, readyState:', videoRef.current.readyState);
       } else {
         console.error('videoRef.current no está definido o componente desmontado');
@@ -257,19 +209,19 @@ const QrScanner = ({ onLogout }) => {
     setIsScanning(false);
     setIsVideoReady(false);
     console.log('isScanning establecido a false, isVideoReady establecido a false');
-    
-    if (animationFrameRef.current) {
-      console.log('Cancelando requestAnimationFrame');
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = null;
+
+    if (qrScannerRef.current) {
+      console.log('Deteniendo qr-scanner');
+      qrScannerRef.current.stop();
+      qrScannerRef.current = null;
     }
-    
+
     if (streamRef.current) {
       console.log('Deteniendo tracks del stream');
       streamRef.current.getTracks().forEach(track => track.stop());
       streamRef.current = null;
     }
-    
+
     if (videoRef.current) {
       console.log('Limpiando srcObject del video');
       videoRef.current.srcObject = null;
@@ -330,7 +282,6 @@ const QrScanner = ({ onLogout }) => {
               playsInline
               muted
             />
-            <canvas ref={canvasRef} style={{ display: 'none' }} />
             <Button 
               variant="contained" 
               color="error"
@@ -357,4 +308,4 @@ const QrScanner = ({ onLogout }) => {
   );
 };
 
-export default QrScanner;
+export default QrScannerComponent;

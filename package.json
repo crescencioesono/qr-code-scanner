@@ -12,12 +12,12 @@
     "@emotion/react": "^11.11.4",
     "@emotion/styled": "^11.11.5",
     "@mui/material": "^5.17.12",
+    "ajv": "^6.12.6",
+    "ajv-keywords": "^3.5.2",
+    "qr-scanner": "^1.4.2",
     "react": "^17.0.2",
     "react-dom": "^17.0.2",
-    "jsqr": "^1.4.0",
-    "react-scripts": "^5.0.1",
-    "ajv": "^6.12.6",
-    "ajv-keywords": "^3.5.2"
+    "react-scripts": "^5.0.1"
   },
   "devDependencies": {
     "@eslint/js": "^8.57.0",
