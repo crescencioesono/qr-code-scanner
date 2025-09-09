@@ -3,6 +3,7 @@ import QrScanner from 'qr-scanner';
 import { Button, Typography, Box, Alert, Paper } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';
+import { decryptQRData } from './decryptQR';
 
 const QrScannerComponent = ({ onLogout }) => {
   const [scanResult, setScanResult] = useState('');
@@ -54,20 +55,20 @@ const QrScannerComponent = ({ onLogout }) => {
         const devices = await navigator.mediaDevices.enumerateDevices();
         const videoDevices = devices.filter(device => device.kind === 'videoinput');
         console.log('Cámaras disponibles:', videoDevices);
-        
-        const backCamera = videoDevices.find(device => 
-          device.label.toLowerCase().includes('back') || 
-          device.label.toLowerCase().includes('rear') || 
+
+        const backCamera = videoDevices.find(device =>
+          device.label.toLowerCase().includes('back') ||
+          device.label.toLowerCase().includes('rear') ||
           device.label.toLowerCase().includes('trasera') ||
           device.label.toLowerCase().includes('environment')
         ) || videoDevices[videoDevices.length - 1];
-        
+
         if (backCamera) {
           console.log('Cámara trasera seleccionada:', backCamera);
           setBackCamera(backCamera);
           console.log('Verificando permisos con deviceId:', backCamera.deviceId);
-          const testStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { deviceId: backCamera.deviceId } 
+          const testStream = await navigator.mediaDevices.getUserMedia({
+            video: { deviceId: backCamera.deviceId }
           });
           console.log('Permisos de cámara obtenidos');
           testStream.getTracks().forEach(track => track.stop());
@@ -85,6 +86,9 @@ const QrScannerComponent = ({ onLogout }) => {
     };
 
     initializeCamera();
+    return () => {
+      console.log('Limpiando verificación de cámara');
+    };
   }, []);
 
   // Iniciar escaneo
@@ -96,11 +100,29 @@ const QrScannerComponent = ({ onLogout }) => {
     }
 
     let localIsScanning = true;
-    console.log('Iniciando escaneo, localIsScanning:', localIsScanning);
+    console.log('Iniciando escaneo, localIsScanning:', localIsScanning, 'state isScanning:', true);
     setError('');
     setScanResult('');
     setIsScanning(true);
     setIsVideoReady(false);
+
+    // Limpieza de recursos previos
+    if (qrScannerRef.current) {
+      console.log('Limpiando qr-scanner previo');
+      qrScannerRef.current.stop();
+      qrScannerRef.current = null;
+    }
+    if (streamRef.current) {
+      console.log('Limpiando stream previo');
+      streamRef.current.getTracks().forEach(track => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      console.log('Limpiando videoRef previo');
+      videoRef.current.srcObject = null;
+      videoRef.current.onloadedmetadata = null;
+      videoRef.current.onerror = null;
+    }
 
     try {
       const constraints = {
@@ -118,15 +140,31 @@ const QrScannerComponent = ({ onLogout }) => {
       streamRef.current = stream;
       console.log('Flujo de video obtenido:', stream);
 
-      if (videoRef.current && isMounted.current) {
+      if (!isMounted.current) {
+        console.error('Componente desmontado antes de asignar stream');
+        setError('Error: Componente desmontado');
+        stream.getTracks().forEach(track => track.stop());
+        return;
+      }
+
+      if (videoRef.current) {
         console.log('Asignando stream al elemento video');
         videoRef.current.srcObject = stream;
 
         console.log('Esperando metadatos del video');
         videoRef.current.onloadedmetadata = () => {
-          console.log('Metadatos del video cargados:', { 
-            width: videoRef.current.videoWidth, 
-            height: videoRef.current.videoHeight 
+          if (!videoRef.current || !isMounted.current) {
+            console.error('videoRef.current es null o componente desmontado en onloadedmetadata');
+            setError('Error: Elemento de video no disponible o componente desmontado');
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach(track => track.stop());
+              streamRef.current = null;
+            }
+            return;
+          }
+          console.log('Metadatos del video cargados:', {
+            width: videoRef.current.videoWidth,
+            height: videoRef.current.videoHeight
           });
           console.log('Intentando reproducir video, localIsScanning:', localIsScanning, 'state isScanning:', isScanning);
           videoRef.current.play().then(() => {
@@ -137,19 +175,27 @@ const QrScannerComponent = ({ onLogout }) => {
               console.log('Estableciendo isVideoReady: true');
               setIsVideoReady(true);
               console.log('Inicializando QrScanner');
-              qrScannerRef.current = new QrScanner(videoRef.current, (result) => {
+              qrScannerRef.current = new QrScanner(videoRef.current, async (result) => {
                 console.log('Código QR detectado:', result.data);
-                setScanResult(result.data);
-                setHistory((prev) => [
-                  { 
-                    user: user.username, 
-                    code: result.data, 
-                    timestamp: new Date().toLocaleString('es-ES'),
-                    id: Date.now()
-                  },
-                  ...prev,
-                ]);
-                stopScanning();
+                try {
+                  const decryptedData = await decryptQRData(result.data);
+                  console.log('Datos descifrados:', decryptedData);
+                  setScanResult(JSON.stringify(decryptedData, null, 2));
+                  setHistory((prev) => [
+                    {
+                      user: user.username,
+                      code: JSON.stringify(decryptedData),
+                      timestamp: new Date().toLocaleString('es-ES'),
+                      id: Date.now()
+                    },
+                    ...prev,
+                  ]);
+                  stopScanning();
+                } catch (error) {
+                  console.error('Error al descifrar QR:', error.message);
+                  setError('Error al descifrar el código QR: ' + error.message);
+                  stopScanning();
+                }
               }, {
                 maxScansPerSecond: 30,
                 highlightScanRegion: true,
@@ -161,46 +207,60 @@ const QrScannerComponent = ({ onLogout }) => {
               }).catch(err => {
                 console.error('Error al iniciar qr-scanner:', err.name, err.message);
                 setError('Error al iniciar el escáner: ' + err.message);
-                localIsScanning = false;
-                setIsScanning(false);
-                setIsVideoReady(false);
+                if (streamRef.current) {
+                  streamRef.current.getTracks().forEach(track => track.stop());
+                  streamRef.current = null;
+                }
               });
             } else {
-              console.log('No se inicia bucle de escaneo', { localIsScanning, stateIsScanning: isScanning, isMounted: isMounted.current });
+              console.error('No se inicia bucle de escaneo', {
+                localIsScanning,
+                stateIsScanning: isScanning,
+                isMounted: isMounted.current
+              });
+              setError('Error: Escaneo interrumpido porque el componente se desmontó o el video no está disponible');
+              if (streamRef.current) {
+                streamRef.current.getTracks().forEach(track => track.stop());
+                streamRef.current = null;
+              }
             }
           }).catch(err => {
             console.error('Error al reproducir video:', err.name, err.message);
             setError('Error al reproducir video: ' + err.message);
-            console.log('Estableciendo localIsScanning y state isScanning: false debido a error en play');
-            localIsScanning = false;
-            setIsScanning(false);
-            setIsVideoReady(false);
+            if (streamRef.current) {
+              streamRef.current.getTracks().forEach(track => track.stop());
+              streamRef.current = null;
+            }
           });
         };
         videoRef.current.onerror = (err) => {
           console.error('Error en el elemento video:', err);
           setError('Error en el elemento video: ' + (err.message || 'Desconocido'));
-          console.log('Estableciendo localIsScanning y state isScanning: false debido a error en video');
-          localIsScanning = false;
-          setIsScanning(false);
-          setIsVideoReady(false);
+          if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+            streamRef.current = null;
+          }
         };
-        console.log('Estado inicial del video, readyState:', videoRef.current.readyState);
+        console.log('Estado inicial del video, readyState:', videoRef.current ? videoRef.current.readyState : 'videoRef.current es null');
       } else {
-        console.error('videoRef.current no está definido o componente desmontado');
-        setError('Error: Elemento de video no disponible o componente desmontado');
-        console.log('Estableciendo localIsScanning y state isScanning: false debido a videoRef no definido');
-        localIsScanning = false;
-        setIsScanning(false);
-        setIsVideoReady(false);
+        console.error('videoRef.current no está definido');
+        setError('Error: Elemento de video no disponible');
+        if (streamRef.current) {
+          streamRef.current.getTracks().forEach(track => track.stop());
+          streamRef.current = null;
+        }
       }
     } catch (err) {
       console.error('Error al iniciar el flujo de video:', err.name, err.message);
       setError(`Error al iniciar el flujo de video: ${err.message}`);
-      console.log('Estableciendo localIsScanning y state isScanning: false debido a error en getUserMedia');
-      localIsScanning = false;
-      setIsScanning(false);
-      setIsVideoReady(false);
+      if (err.name === 'NotAllowedError' || err.name === 'NotFoundError') {
+        setIsScanning(false);
+        setIsVideoReady(false);
+      }
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach(track => track.stop());
+        streamRef.current = null;
+      }
     }
   };
 
@@ -211,7 +271,7 @@ const QrScannerComponent = ({ onLogout }) => {
     console.log('isScanning establecido a false, isVideoReady establecido a false');
 
     if (qrScannerRef.current) {
-      console.log('Deteniendo qr-scanner');
+      console.log('Deteniendo y destruyendo qr-scanner');
       qrScannerRef.current.stop();
       qrScannerRef.current = null;
     }
@@ -223,18 +283,29 @@ const QrScannerComponent = ({ onLogout }) => {
     }
 
     if (videoRef.current) {
-      console.log('Limpiando srcObject del video');
+      console.log('Limpiando srcObject y eventos del video');
       videoRef.current.srcObject = null;
+      videoRef.current.onloadedmetadata = null;
+      videoRef.current.onerror = null;
+      console.log('Video stream cleared');
+      const overlay = videoRef.current.parentElement?.querySelector('.scan-region-highlight');
+      if (overlay) {
+        console.log('Eliminando overlay de qr-scanner');
+        overlay.remove();
+      }
     }
   };
 
   // Cleanup al desmontar
   useEffect(() => {
     isMounted.current = true;
+    console.log('Componente montado, isMounted: true');
     return () => {
-      console.log('Limpiando componente al desmontar');
+      console.log('Componente desmontado, limpiando');
       isMounted.current = false;
-      stopScanning();
+      if (streamRef.current || qrScannerRef.current) {
+        stopScanning();
+      }
     };
   }, []);
 
@@ -250,30 +321,40 @@ const QrScannerComponent = ({ onLogout }) => {
       >
         Cerrar Sesión
       </Button>
-      
+
       {cameraPermission === false && (
         <Alert severity="error">
           No se tienen permisos para acceder a la cámara. Habilítalos en la configuración y usa HTTPS.
         </Alert>
       )}
-      
+
       {error && <Alert severity="error">{error}</Alert>}
-      
+
       {scanResult && (
-        <Paper sx={{ p: 2, mb: 2 }}>
+        <Paper sx={{ p: 2, mb: 2, maxWidth: '400px', overflow: 'hidden' }}>
           <Typography variant="h6">Resultado:</Typography>
-          <Typography sx={{ wordBreak: 'break-all' }}>{scanResult}</Typography>
+          <Typography
+            component="pre"
+            sx={{
+              overflowWrap: 'break-word',
+              wordBreak: 'break-all',
+              whiteSpace: 'pre-wrap',
+              fontFamily: 'monospace'
+            }}
+          >
+            {scanResult}
+          </Typography>
         </Paper>
       )}
-      
-      <Box sx={{ mb: 2 }}>
-        {isScanning ? (
+
+      <Box sx={{ mb: 2, position: 'relative' }}>
+        {isScanning && (
           <>
             <video
               ref={videoRef}
-              style={{ 
-                width: '100%', 
-                maxWidth: '400px', 
+              style={{
+                width: '100%',
+                maxWidth: '400px',
                 display: 'block',
                 border: '2px solid #1976d2',
                 borderRadius: '8px'
@@ -282,8 +363,8 @@ const QrScannerComponent = ({ onLogout }) => {
               playsInline
               muted
             />
-            <Button 
-              variant="contained" 
+            <Button
+              variant="contained"
               color="error"
               onClick={stopScanning}
               sx={{ mt: 1 }}
@@ -292,17 +373,18 @@ const QrScannerComponent = ({ onLogout }) => {
               Detener Escaneo
             </Button>
           </>
-        ) : (
-          <Button 
-            variant="contained" 
+        )}
+        {!isScanning && (
+          <Button
+            variant="contained"
             onClick={startScanning}
-            disabled={!cameraPermission}
+            disabled={cameraPermission === false}
           >
             Iniciar Escaneo
           </Button>
         )}
       </Box>
-      
+
       <ScanHistory history={history} />
     </Box>
   );
