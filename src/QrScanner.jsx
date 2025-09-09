@@ -10,6 +10,7 @@ const QrScanner = ({ onLogout }) => {
   const [cameraPermission, setCameraPermission] = useState(null);
   const [isScanning, setIsScanning] = useState(false);
   const [history, setHistory] = useState([]);
+  const [backCamera, setBackCamera] = useState(null);
   const { user } = useContext(AuthContext);
 
   // Cargar historial desde localStorage
@@ -27,7 +28,7 @@ const QrScanner = ({ onLogout }) => {
     }
   }, [history]);
 
-  // Verificar permisos de cámara
+  // Verificar permisos de cámara y seleccionar cámara trasera
   useEffect(() => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setCameraPermission(false);
@@ -35,16 +36,36 @@ const QrScanner = ({ onLogout }) => {
       return;
     }
 
-    navigator.mediaDevices
-      .getUserMedia({ video: { facingMode: 'environment' } })
-      .then(() => setCameraPermission(true))
-      .catch((err) => {
+    navigator.mediaDevices.enumerateDevices().then(devices => {
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+      console.log('Cámaras disponibles:', videoDevices);
+      const backCamera = videoDevices.find(device => 
+        device.label.toLowerCase().includes('back') || 
+        device.label.toLowerCase().includes('rear') || 
+        device.label.toLowerCase().includes('trasera')
+      ) || videoDevices[0];
+      
+      if (backCamera) {
+        setBackCamera(backCamera);
+        navigator.mediaDevices
+          .getUserMedia({ video: { deviceId: backCamera.deviceId } })
+          .then(() => setCameraPermission(true))
+          .catch((err) => {
+            setCameraPermission(false);
+            setError(`No se puede acceder a la cámara trasera: ${err.message}. Asegúrate de usar HTTPS y otorgar permisos.`);
+          });
+      } else {
         setCameraPermission(false);
-        setError(`No se puede acceder a la cámara trasera: ${err.message}. Asegúrate de usar HTTPS y otorgar permisos.`);
-      });
+        setError('No se encontró una cámara trasera.');
+      }
+    }).catch(err => {
+      setCameraPermission(false);
+      setError(`Error al enumerar dispositivos: ${err.message}`);
+    });
   }, []);
 
   const handleScan = (data) => {
+    console.log('handleScan ejecutado con datos:', data);
     if (data) {
       setScanResult(data);
       setHistory((prev) => [
@@ -56,6 +77,7 @@ const QrScanner = ({ onLogout }) => {
   };
 
   const handleError = (err) => {
+    console.error('Error en QrReader:', err);
     setError('Error al escanear: ' + err.message);
     setIsScanning(false);
   };
@@ -97,11 +119,12 @@ const QrScanner = ({ onLogout }) => {
       <Box sx={{ mb: 2 }}>
         {isScanning ? (
           <QrReader
-            delay={300}
+            delay={500}
             onError={handleError}
             onScan={handleScan}
             style={{ width: '100%', maxWidth: '400px' }}
-            constraints={{ facingMode: 'environment' }}
+            constraints={{ deviceId: backCamera ? backCamera.deviceId : { facingMode: 'environment' } }}
+            legacyMode={false}
           />
         ) : (
           <Button variant="contained" onClick={startScanning}>
