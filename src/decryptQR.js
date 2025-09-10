@@ -1,26 +1,30 @@
 import cryptoShim from './cryptoShim';
 import { Buffer } from 'buffer';
 
-// Clave secreta (debe coincidir con QR_SECRET en el backend, 32 bytes)
-const QR_SECRET = "jLYmfwqolnnlJGoEk5JKH/Hm1QudN/atoPicX82Xk94=";
-if (!QR_SECRET) {
-  throw new Error('REACT_APP_QR_SECRET no está definida en .env');
-}
-const secretBuffer = Buffer.from(QR_SECRET, 'utf8');
-// if (secretBuffer.length !== 32) {
-//   throw new Error(`REACT_APP_QR_SECRET debe ser una clave de 32 bytes, longitud actual: ${secretBuffer.length}`);
-// }
+// Clave secreta en Base64 (debe coincidir con la del backend)
+const QR_SECRET_BASE64 = 'jLYmfwqoInnIJGoEk5JKH/Hm1QudN/atoPicX82Xk94=';
 
 export async function decryptQRData(encryptedData) {
   try {
+    const secretBuffer = Buffer.from(QR_SECRET_BASE64, 'base64');
+  if (secretBuffer.length !== 32) {
+    throw new Error(`La clave secreta debe ser de 32 bytes, longitud actual: ${secretBuffer.length}`);
+  }
     if (!encryptedData || typeof encryptedData !== 'string') {
       throw new TypeError('Los datos cifrados deben ser una cadena no vacía');
     }
 
-    console.log('Descifrando QR, longitud de entrada:', encryptedData.length);
-    
-    // Decodificar Base64
-    const payload = Buffer.from(encryptedData, 'base64');
+    console.log('Descifrando QR, datos de entrada:', encryptedData);
+    console.log('Longitud de entrada:', encryptedData.length);
+
+    // Decodificar Base64 URL-safe
+    let payload;
+    try {
+      payload = Buffer.from(encryptedData, 'base64');
+    } catch (err) {
+      console.error('Error al decodificar Base64:', err.message);
+      throw new Error(`Formato Base64 inválido: ${err.message}`);
+    }
     console.log('Longitud del payload decodificado:', payload.length);
     if (payload.length < 16 + 32) {
       throw new RangeError('Payload cifrado demasiado corto (mínimo 48 bytes)');
@@ -30,38 +34,41 @@ export async function decryptQRData(encryptedData) {
     const iv = payload.slice(0, 16);
     const hmacDigest = payload.slice(-32);
     const encrypted = payload.slice(16, -32);
-    console.log('IV:', iv.toString('hex'), 'Encrypted length:', encrypted.length, 'HMAC:', hmacDigest.toString('hex'));
+    console.log('IV:', iv.toString('hex'));
+    console.log('Encrypted length:', encrypted.length);
+    console.log('HMAC recibido:', hmacDigest.toString('hex'));
 
-    // Verificar HMAC
+    // Verificar HMAC usando timingSafeEqual
     const hmac = cryptoShim.createHmac('sha256', secretBuffer);
     const hmacUpdate = await hmac.update(Buffer.concat([iv, encrypted]));
     const calculatedHmac = hmacUpdate.digest();
-    if (Buffer.compare(hmacDigest, calculatedHmac) !== 0) {
+    console.log('HMAC calculado:', calculatedHmac.toString('hex'));
+
+    if (!timingSafeEqual(hmacDigest, calculatedHmac)) {
       throw new Error('Verificación HMAC fallida');
     }
 
-    // Descifrar datos
-    const decipher = cryptoShim.createDecipheriv('aes-256-cbc', secretBuffer, iv);
-    let decrypted = await decipher.update(encrypted);
-    decrypted = Buffer.concat([decrypted, decipher.final()]);
-    console.log('Datos descifrados (con padding):', decrypted.toString('hex'));
-
-    // Quitar padding PKCS7
-    const paddingLength = decrypted[decrypted.length - 1];
-    if (paddingLength < 1 || paddingLength > 16) {
-      throw new RangeError(`Padding inválido: ${paddingLength} bytes`);
+    // Descifrar datos con AES-256-CBC
+    let decrypted;
+    try {
+      const decipher = cryptoShim.createDecipheriv('aes-256-cbc', secretBuffer, iv);
+      const update = await decipher.update(encrypted);
+      const final = typeof decipher.final === 'function' ? await decipher.final() : Buffer.alloc(0);
+      decrypted = Buffer.concat([update, final]);
+    } catch (err) {
+      console.error('Error al descifrar datos:', err.message);
+      throw new Error(`Error de descifrado AES: ${err.message}`);
     }
-    const unpadded = decrypted.slice(0, -paddingLength);
-    console.log('Datos sin padding:', unpadded.toString('hex'));
+    console.log('Datos descifrados:', decrypted.toString('hex'));
 
-    // Convertir a string y parsear JSON si es un objeto
-    const result = unpadded.toString('utf-8');
+    // Convertir a string y parsear JSON
+    const result = decrypted.toString('utf-8');
     console.log('Resultado descifrado (string):', result);
     try {
       const parsed = JSON.parse(result);
       console.log('Resultado parseado como JSON:', parsed);
       return parsed;
-    } catch {
+    } catch (parseError) {
       console.log('El resultado no es JSON, devolviendo como string');
       return result;
     }
@@ -69,4 +76,16 @@ export async function decryptQRData(encryptedData) {
     console.error('Error descifrando QR:', error.message, 'Stack:', error.stack);
     throw new Error(`Error descifrando datos del QR: ${error.message}`);
   }
+}
+
+// Función auxiliar para comparación segura de HMAC
+function timingSafeEqual(a, b) {
+  if (a.length !== b.length) {
+    return false;
+  }
+  let result = 0;
+  for (let i = 0; i < a.length; i++) {
+    result |= a[i] ^ b[i];
+  }
+  return result === 0;
 }
