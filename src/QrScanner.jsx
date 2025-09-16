@@ -19,6 +19,7 @@ const QrScannerComponent = ({ onLogout }) => {
   const streamRef = useRef(null);
   const isMounted = useRef(true);
   const fileInputRef = useRef(null);
+  const timeoutRef = useRef(null);
 
   // Cargar historial desde localStorage
   useEffect(() => {
@@ -192,6 +193,13 @@ const QrScannerComponent = ({ onLogout }) => {
                     ...prev,
                   ]);
                   stopScanning();
+                  // Limpiar scanResult después de 5 segundos
+                  if (timeoutRef.current) {
+                    clearTimeout(timeoutRef.current);
+                  }
+                  timeoutRef.current = setTimeout(() => {
+                    setScanResult('');
+                  }, 5000);
                 } catch (error) {
                   console.error('Error al descifrar QR:', error.message);
                   setError('Error al descifrar el código QR: ' + error.message);
@@ -326,6 +334,13 @@ const QrScannerComponent = ({ onLogout }) => {
           },
           ...prev,
         ]);
+        // Limpiar scanResult después de 5 segundos
+        if (timeoutRef.current) {
+          clearTimeout(timeoutRef.current);
+        }
+        timeoutRef.current = setTimeout(() => {
+          setScanResult('');
+        }, 5000);
       } catch (error) {
         console.error('Error al descifrar QR:', error.message);
         setError('Error al descifrar el código QR: ' + error.message);
@@ -350,6 +365,11 @@ const QrScannerComponent = ({ onLogout }) => {
       isMounted.current = false;
       if (streamRef.current || qrScannerRef.current) {
         stopScanning();
+      }
+      // Limpiar timeout si existe
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+        timeoutRef.current = null;
       }
     };
   }, []);
