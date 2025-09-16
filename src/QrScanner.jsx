@@ -13,6 +13,7 @@ const QrScannerComponent = ({ onLogout }) => {
   const [history, setHistory] = useState([]);
   const [backCamera, setBackCamera] = useState(null);
   const [isVideoReady, setIsVideoReady] = useState(false);
+  const [showAllScans, setShowAllScans] = useState(false);
   const { user } = useContext(AuthContext);
   const videoRef = useRef(null);
   const qrScannerRef = useRef(null);
@@ -356,6 +357,11 @@ const QrScannerComponent = ({ onLogout }) => {
     }
   };
 
+  // Alternar mostrar todos los escaneos
+  const toggleShowAllScans = () => {
+    setShowAllScans((prev) => !prev);
+  };
+
   // Cleanup al desmontar
   useEffect(() => {
     isMounted.current = true;
@@ -467,7 +473,7 @@ const QrScannerComponent = ({ onLogout }) => {
         )}
       </Box>
 
-      <ScanHistory history={history} />
+      <ScanHistory history={history} showAllScans={showAllScans} toggleShowAllScans={toggleShowAllScans} />
     </Box>
   );
 };
