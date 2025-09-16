@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useContext, useRef } from 'react';
 import QrScanner from 'qr-scanner';
-import { Button, Typography, Box, Alert, Paper } from '@mui/material';
+import { Button, Typography, Box, Alert, Paper, Input } from '@mui/material';
 import { AuthContext } from './AuthContext';
 import ScanHistory from './ScanHistory';
 import { decryptQRData } from './decryptQR';
@@ -18,6 +18,7 @@ const QrScannerComponent = ({ onLogout }) => {
   const qrScannerRef = useRef(null);
   const streamRef = useRef(null);
   const isMounted = useRef(true);
+  const fileInputRef = useRef(null);
 
   // Cargar historial desde localStorage
   useEffect(() => {
@@ -296,6 +297,50 @@ const QrScannerComponent = ({ onLogout }) => {
     }
   };
 
+  // Manejar subida de archivo
+  const handleFileUpload = async (event) => {
+    const file = event.target.files[0];
+    if (!file) {
+      console.log('No se seleccionó ningún archivo');
+      setError('Por favor, selecciona una imagen');
+      return;
+    }
+
+    console.log('Archivo seleccionado:', file.name);
+    setError('');
+    setScanResult('');
+
+    try {
+      const result = await QrScanner.scanImage(file);
+      console.log('Código QR detectado:', result);
+      try {
+        const decryptedData = await decryptQRData(result);
+        console.log('Datos descifrados:', decryptedData);
+        setScanResult(JSON.stringify(decryptedData, null, 2));
+        setHistory((prev) => [
+          {
+            user: user.username,
+            code: JSON.stringify(decryptedData),
+            timestamp: new Date().toLocaleString('es-ES'),
+            id: Date.now()
+          },
+          ...prev,
+        ]);
+      } catch (error) {
+        console.error('Error al descifrar QR:', error.message);
+        setError('Error al descifrar el código QR: ' + error.message);
+      }
+    } catch (err) {
+      console.error('Error al escanear imagen:', err.message);
+      setError('Error al escanear la imagen: ' + err.message);
+    } finally {
+      // Resetear el input para permitir subir la misma imagen de nuevo
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
   // Cleanup al desmontar
   useEffect(() => {
     isMounted.current = true;
@@ -367,7 +412,7 @@ const QrScannerComponent = ({ onLogout }) => {
               variant="contained"
               color="error"
               onClick={stopScanning}
-              sx={{ mt: 1 }}
+              sx={{ mt: 1, mr: 1 }}
               disabled={!isVideoReady}
             >
               Detener Escaneo
@@ -375,13 +420,30 @@ const QrScannerComponent = ({ onLogout }) => {
           </>
         )}
         {!isScanning && (
-          <Button
-            variant="contained"
-            onClick={startScanning}
-            disabled={cameraPermission === false}
-          >
-            Iniciar Escaneo
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              onClick={startScanning}
+              disabled={cameraPermission === false}
+              sx={{ mr: 1 }}
+            >
+              Iniciar Escaneo
+            </Button>
+            <Button
+              variant="contained"
+              component="label"
+              color="primary"
+            >
+              Subir Imagen
+              <Input
+                type="file"
+                inputRef={fileInputRef}
+                sx={{ display: 'none' }}
+                inputProps={{ accept: 'image/*' }}
+                onChange={handleFileUpload}
+              />
+            </Button>
+          </>
         )}
       </Box>
 
